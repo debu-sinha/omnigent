@@ -111,8 +111,8 @@ changes:
 4. `npm run test` → green.
 
 If we ever decide cross-language fixture parity is worth the
-maintenance burden, the design doc (`designs/ui/WEB_UI.md` §"Phased
-build plan" → "Phase 0") describes the captured-fixture approach.
+maintenance burden, we'd port the captured-fixture approach used
+for `test_stream.py`.
 
 ### ap-web-only divergences
 
@@ -152,6 +152,3 @@ alone.
   next-themes, react-hook-form, zod
 - Lint: oxlint. Format: prettier.
 
-## See also
-
-The full design and phased build plan: [`designs/ui/WEB_UI.md`](../designs/ui/WEB_UI.md).

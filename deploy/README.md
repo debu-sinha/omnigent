@@ -91,7 +91,7 @@ deploy/
 | Deploy to Fly.io | Fly | [`fly/README.md`](fly/README.md): `fly deploy`, SQLite on a volume |
 | Deploy to Modal (durable artifact Volume) | Modal | [`modal/README.md`](modal/README.md): `modal deploy`, BYO Neon Postgres |
 | Stand up a quick demo (no DB to provision) | HF Spaces | [`hf-spaces/README.md`](hf-spaces/README.md): Docker Space, SQLite |
-| Share a server running on your **laptop**: demo it to teammates, or let remote runners & cloud sandboxes connect back to it (nothing to deploy) | Cloudflare quick tunnel | [`trycloudflare/README.md`](trycloudflare/README.md): `cloudflared tunnel --url http://localhost:6767` |
+| Share a server running on your **laptop**: demo it to teammates, or let remote runners & cloud sandboxes connect back to it (nothing to deploy) | Cloudflare quick tunnel | `cloudflared tunnel --url http://localhost:6767` |
 | Cloud Run / Kubernetes / other | Docker image | [`docker/README.md`](docker/README.md), then point your platform at the image |
 
 All deploy paths share the same image (`docker/Dockerfile`): a slim Python

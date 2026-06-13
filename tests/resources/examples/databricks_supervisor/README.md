@@ -5,8 +5,8 @@ A minimal agent that delegates the entire turn (model + tools) to the
 
 For the integration overview — why the integration is partial today,
 where the code lives, how to wire up a new tool, and which tool
-types have portable MCP equivalents — see
-[`designs/DATABRICKS_SUPERVISOR_API_INTEGRATION.md`](../../designs/DATABRICKS_SUPERVISOR_API_INTEGRATION.md).
+types have portable MCP equivalents — see the supervisor harness/executor/gateway under
+`omnigent/inner/databricks_supervisor_*.py`.
 
 ## Prerequisites
 

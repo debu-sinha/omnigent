@@ -96,7 +96,7 @@ You usually don't need to choose a `sandbox.type` — omit it and Omnigent picks
 the platform default (`linux_bwrap` on Linux, `darwin_seatbelt` on macOS), so the
 same YAML works across platforms. For the full set of sandbox options, how to
 share one policy across `sys_os_*` and terminals, and how to set up network
-egress rules, see [Sandboxing](SANDBOXING.md).
+egress rules, see the `sandbox:` examples below and the sandbox source under `omnigent/inner/`.
 
 ## Tools
 
@@ -211,8 +211,7 @@ terminals:
 Use `os_env: inherit` to give the terminal the same sandbox as the agent, or
 alias a shared `sandbox:` block so `sys_os_*` and the terminal enforce the same
 policy. Keep `allow_sandbox_override: false` unless you intend to let the
-launcher weaken the sandbox at launch time. See [Sandboxing](SANDBOXING.md) for
-details.
+launcher weaken the sandbox at launch time.
 
 ## Complete example
 
