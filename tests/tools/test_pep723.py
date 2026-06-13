@@ -119,3 +119,53 @@ def test_parse_multiline_dependencies_after_requires_python() -> None:
     result = parse_inline_metadata(source)
     assert result is not None
     assert result.dependencies == ["requests<3", "rich"]
+
+
+def test_parse_dependencies_with_extras() -> None:
+    """
+    Dependency specifiers containing PEP 508 ``[extras]`` (e.g.
+    ``uvicorn[standard]``) are parsed in full, including the bracketed
+    extras and any trailing version constraint.
+    """
+    source = """\
+# /// script
+# dependencies = ["requests[security]>=2.0", "uvicorn[standard]"]
+# ///
+"""
+    result = parse_inline_metadata(source)
+    assert result is not None
+    assert result.dependencies == ["requests[security]>=2.0", "uvicorn[standard]"]
+
+
+def test_parse_multiline_dependencies_with_extras() -> None:
+    """
+    A multi-line dependency array whose specifiers carry ``[extras]`` is
+    parsed correctly (the array's closing ``]`` is not confused with the
+    ``]`` that closes an extras group).
+    """
+    source = """\
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#   "pydantic[email]>=2",
+#   "fastapi[all]",
+# ]
+# ///
+"""
+    result = parse_inline_metadata(source)
+    assert result is not None
+    assert result.dependencies == ["pydantic[email]>=2", "fastapi[all]"]
+
+
+def test_parse_malformed_toml_returns_none() -> None:
+    """
+    A metadata block whose content is not valid TOML degrades gracefully
+    to ``None`` rather than raising, so tool discovery is never broken by
+    a malformed inline-metadata block.
+    """
+    source = """\
+# /// script
+# dependencies = ["unterminated
+# ///
+"""
+    assert parse_inline_metadata(source) is None
