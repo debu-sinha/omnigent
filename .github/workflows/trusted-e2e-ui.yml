@@ -1,0 +1,289 @@
+name: Trusted E2E UI Tests
+
+# Runs the Playwright UI suite for fork PRs only after a maintainer has
+# approved the PR. This stays advisory: it posts a separate
+# `Trusted E2E UI Tests` commit status that merge-ready does not require.
+#
+# Triggers:
+#   pull_request_target  Re-check already-approved fork PRs on open / sync /
+#                        reopen / ready_for_review.
+#   workflow_dispatch    Explicit kick from maintainer-approval-rerun-run.yml
+#                        when approval lands on an already-open fork PR.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pull_number:
+        description: "Fork PR number to run trusted e2e-ui against"
+        required: true
+
+concurrency:
+  group: trusted-e2e-ui-${{ github.workflow }}-${{ github.event.pull_request.number || github.event.inputs.pull_number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  OMNIGENT_SKIP_WEB_UI: "true"
+  ANTHROPIC_API_KEY: ""
+  DATABRICKS_TOKEN: ""
+  CODEX: ""
+  CLAUDE_CODE: ""
+  UV_INDEX_URL: https://pypi.org/simple
+  TERM: xterm-256color
+
+jobs:
+  resolve:
+    name: resolve
+    if: ${{ github.event_name != 'pull_request_target' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    outputs:
+      pull_number: ${{ steps.pr.outputs.pull_number }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      head_repo: ${{ steps.pr.outputs.head_repo }}
+      allowed: ${{ steps.trust.outputs.allowed }}
+      reason: ${{ steps.trust.outputs.reason }}
+    steps:
+      - name: Check out scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Resolve PR context
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pull_number }}
+        run: |
+          echo "pull_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          gh api "repos/$REPO/pulls/$PR_NUMBER" \
+            --jq '"head_sha=\(.head.sha)\nhead_repo=\(.head.repo.full_name)"' >> "$GITHUB_OUTPUT"
+
+      - name: Load maintainers
+        id: maintainers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/merge-ready/load-maintainers.sh
+
+      - name: Determine trust
+        id: trust
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.pull_number }}
+          HEAD_REPO: ${{ steps.pr.outputs.head_repo }}
+          MAINTAINERS: ${{ steps.maintainers.outputs.list }}
+        run: bash .github/scripts/trusted-pr/eligibility.sh
+
+      - name: Post pending status
+        if: steps.trust.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.pr.outputs.head_sha }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api "repos/$REPO/statuses/$SHA" \
+            -f state="pending" \
+            -f context="Trusted E2E UI Tests" \
+            -f description="Running trusted fork-PR e2e-ui" \
+            -f target_url="$TARGET_URL" >/dev/null
+
+  e2e-ui:
+    name: Trusted E2E UI Tests (shard ${{ matrix.shard_id }}/${{ matrix.num_shards }})
+    needs: resolve
+    if: needs.resolve.outputs.allowed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - shard_id: 0
+            num_shards: 3
+          - shard_id: 1
+            num_shards: 3
+          - shard_id: 2
+            num_shards: 3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          repository: ${{ needs.resolve.outputs.head_repo }}
+          ref: ${{ needs.resolve.outputs.head_sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Set up Node 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ap-web/package-lock.json
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a  # v4
+        with:
+          enable-cache: true
+
+      - name: Cache virtualenv
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('.python-version') }}-${{ hashFiles('uv.lock') }}
+
+      - name: Set LLM credentials
+        run: echo "LLM_API_KEY=${{ secrets.LLM_API_KEY }}" >> "$GITHUB_ENV"
+
+      - name: Install project + dev extras
+        run: uv sync --extra all --extra dev
+
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install Playwright Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Build ap-web SPA
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+        run: |
+          cd ap-web
+          npm ci --legacy-peer-deps --no-audit --no-fund
+          npm run build
+
+      - name: Run UI e2e tests
+        env:
+          OPENAI_API_KEY: ${{ env.LLM_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.GATEWAY_BASE_URL }}
+          NIGHTLY_FULL: "false"
+          SHARD_ID: ${{ matrix.shard_id }}
+          NUM_SHARDS: ${{ matrix.num_shards }}
+        run: |
+          EXTRA_ARGS=()
+          if [[ "$NIGHTLY_FULL" != "true" ]]; then
+            EXTRA_ARGS+=(-m "not nightly")
+          fi
+          uv run pytest tests/e2e_ui \
+            -v --tb=long --showlocals --log-level=INFO -r a \
+            --ui-skip-build \
+            --shard-id="$SHARD_ID" \
+            --num-shards="$NUM_SHARDS" \
+            --tracing=retain-on-failure \
+            --screenshot=only-on-failure \
+            --video=retain-on-failure \
+            "${EXTRA_ARGS[@]}" \
+            || { rc=$?; [ "$rc" -eq 5 ] && echo "::notice::No tests collected in this shard; treating as a pass." || exit "$rc"; }
+
+      - name: Upload Playwright traces / videos / screenshots on failure
+        id: upload_playwright
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: trusted-e2e-ui-playwright-${{ github.run_id }}-shard${{ matrix.shard_id }}
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 3
+          if-no-files-found: ignore
+
+      - name: Upload server logs on failure
+        id: upload_server_logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: trusted-e2e-ui-server-logs-${{ github.run_id }}-shard${{ matrix.shard_id }}
+          path: /tmp/pytest-of-runner/**/e2e_ui_server*/server.log
+          retention-days: 3
+          if-no-files-found: ignore
+
+      - name: Surface failure artifacts on job summary
+        if: failure()
+        env:
+          PLAYWRIGHT_URL: ${{ steps.upload_playwright.outputs.artifact-url }}
+          SERVER_LOGS_URL: ${{ steps.upload_server_logs.outputs.artifact-url }}
+        run: |
+          {
+            echo "## Failure artifacts"
+            echo
+            echo "Direct downloads (retention 3 days):"
+            echo
+            if [ -n "${PLAYWRIGHT_URL}" ]; then
+              echo "- 🎬 [Playwright trace / video / screenshots](${PLAYWRIGHT_URL})"
+            else
+              echo "- 🎬 Playwright trace: _no artifact uploaded (test-results/ was empty)_"
+            fi
+            if [ -n "${SERVER_LOGS_URL}" ]; then
+              echo "- 📜 [omnigent server log](${SERVER_LOGS_URL})"
+            else
+              echo "- 📜 server.log: _no artifact uploaded (glob matched nothing)_"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  report:
+    name: report
+    needs: [resolve, e2e-ui]
+    if: always() && needs.resolve.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ needs.resolve.outputs.head_sha }}
+      TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      ALLOWED: ${{ needs.resolve.outputs.allowed }}
+      REASON: ${{ needs.resolve.outputs.reason }}
+      E2E_UI_RESULT: ${{ needs.e2e-ui.result }}
+    steps:
+      - name: Post final status
+        run: |
+          if [[ "$ALLOWED" != "true" ]]; then
+            echo "Trusted e2e-ui not eligible: $REASON"
+            exit 0
+          fi
+
+          STATE=success
+          DESC="Trusted fork-PR e2e-ui passed"
+          if [[ "$E2E_UI_RESULT" == "failure" ]]; then
+            STATE=failure
+            DESC="Trusted fork-PR e2e-ui failed"
+          elif [[ "$E2E_UI_RESULT" == "cancelled" ]]; then
+            STATE=error
+            DESC="Trusted fork-PR e2e-ui cancelled"
+          fi
+
+          gh api "repos/$REPO/statuses/$SHA" \
+            -f state="$STATE" \
+            -f context="Trusted E2E UI Tests" \
+            -f description="$DESC" \
+            -f target_url="$TARGET_URL" >/dev/null
