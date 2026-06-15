@@ -161,7 +161,7 @@ jobs:
       - name: Install project + dev extras
         run: uv sync --extra all --extra dev
 
-      - name: Install bubblewrap
+      - name: Install bubblewrap + tmux
         # The UI tests boot a real server and open terminals, which run
         # under os_env. An agent/terminal that omits `os_env.sandbox.type`
         # defaults to `linux_bwrap` on Linux and fails loud at runtime if
@@ -171,9 +171,13 @@ jobs:
         # sysctl mirrors ci.yml: Ubuntu 24.04 blocks unprivileged user
         # namespaces by default, which `bwrap`'s `unshare(CLONE_NEWUSER)`
         # needs.
+        #
+        # tmux (TEMP: native-claude validation): the claude-native harness
+        # drives Claude Code through a tmux pane (omnigent/claude_native_bridge),
+        # so the native render-parity test needs `tmux` on PATH like e2e.yml.
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap
+          sudo apt-get install -y bubblewrap tmux
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Cache Playwright browsers
@@ -207,7 +211,56 @@ jobs:
           npm ci --legacy-peer-deps --no-audit --no-fund
           npm run build
 
+      # ----------------------------------------------------------------------
+      # TEMP (native-claude validation): the three steps below enable the
+      # claude-native ("Claude Code") harness so test_native_claude_render_parity
+      # can boot a real Claude Code CLI in CI. Mirrors how e2e.yml / integration.yml
+      # auth the Claude harnesses. REVERT this block before merge — the standard
+      # e2e-ui suite (openai-agents) does not need it.
+      # ----------------------------------------------------------------------
+      - name: Install Claude Code CLI (TEMP)
+        # Pinned @anthropic-ai/claude-code from .github/ci-deps, same as e2e.yml.
+        # --ignore-scripts blocks arbitrary postinstall; we then run claude-code's
+        # own install.cjs explicitly (audited: platform detect + same-tree hardlink
+        # of the native binary, no network/exec) and put its bin on PATH.
+        working-directory: .github/ci-deps
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+        run: |
+          npm install --ignore-scripts
+          node node_modules/@anthropic-ai/claude-code/install.cjs
+          echo "${GITHUB_WORKSPACE}/.github/ci-deps/node_modules/.bin" >> "$GITHUB_PATH"
 
+      - name: Configure native-claude gateway provider (TEMP)
+        # The runner derives Claude Code's gateway auth from omnigent provider
+        # config (omnigent.claude_native.resolve_native_claude_config). Register
+        # the Databricks serving-endpoints gateway as the default anthropic
+        # provider: ANTHROPIC_BASE_URL := the gateway, the token reaches Claude
+        # via a printf apiKeyHelper built from env:LLM_API_KEY (the runner env
+        # allowlist excludes ANTHROPIC_API_KEY), model := the CI Claude model.
+        # ~/.databrickscfg mirrors e2e.yml for any ambient lookups.
+        env:
+          GATEWAY_BASE_URL: ${{ secrets.GATEWAY_BASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          mkdir -p "$HOME/.omnigent"
+          cat > "$HOME/.omnigent/config.yaml" <<EOF
+          providers:
+            databricks-gateway:
+              kind: gateway
+              default: anthropic
+              anthropic:
+                base_url: "${GATEWAY_BASE_URL}"
+                api_key_ref: "env:LLM_API_KEY"
+                default_model: databricks-claude-sonnet-4-6
+          EOF
+          host="${GATEWAY_BASE_URL%/serving-endpoints}"
+          cat > "$HOME/.databrickscfg" <<EOF
+          [default]
+          host  = $host
+          token = $LLM_API_KEY
+          EOF
+          echo "DATABRICKS_BEARER=$LLM_API_KEY" >> "$GITHUB_ENV"
 
       - name: Run UI e2e tests
         # --ui-skip-build: the SPA was already built in the previous
@@ -246,8 +299,15 @@ jobs:
           # one-per-shard, evening out wall-clock with no extra dependency
           # and no durations file to maintain. --group is 1-indexed, so we
           # map the 0-indexed matrix shard_id with +1.
-          uv run pytest tests/e2e_ui \
-            -v --tb=long --showlocals --log-level=INFO -r a \
+          # TEMP (native-claude validation): run ONLY the native render-parity
+          # test, not the whole e2e_ui suite. --splits/--group still assign the
+          # single collected test to exactly one shard (the others collect 0 ->
+          # exit 5 -> treated as a pass below), so the matrix stays intact while
+          # Claude Code boots just once. --log-cli-level streams the runner's
+          # claude-native auto-launch + auth-resolution logs live into the step.
+          # REVERT this target back to `tests/e2e_ui` before merge.
+          uv run pytest tests/e2e_ui/messages/test_native_claude_render_parity.py \
+            -v --tb=long --showlocals --log-level=INFO --log-cli-level=INFO -r a -s \
             --ui-skip-build \
             --splits="$NUM_SHARDS" \
             --group="$((SHARD_ID + 1))" \
@@ -287,7 +347,15 @@ jobs:
           # on GitHub-hosted runners. The previous glob targeted
           # ``e2e_ui_logs*``, which never matched, so the artifact was
           # always empty.
-          path: /tmp/pytest-of-runner/**/e2e_ui_server*/server.log
+          #
+          # TEMP (native-claude validation): also grab runner.log (carries the
+          # claude-native auto-launch + auth-resolution + terminal-launch logs)
+          # and the native bridge dir (tmux target, transcript-forward deltas)
+          # under /tmp/omnigent-<uid>/claude-native. REVERT with the rest.
+          path: |
+            /tmp/pytest-of-runner/**/e2e_ui_server*/server.log
+            /tmp/pytest-of-runner/**/e2e_ui_server*/runner.log
+            /tmp/omnigent-*/claude-native/**
           retention-days: 3
           if-no-files-found: ignore
 
