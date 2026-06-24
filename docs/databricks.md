@@ -438,6 +438,31 @@ For a single agent turn that calls one tool and one LLM:
 The trace ID is the hex suffix of the response ID, so you can search
 for a specific request in MLflow by stripping the `resp_` prefix.
 
+### Verified end-to-end
+
+Emitted a synthetic trace from a local Python script (using the same
+`mlflow.start_span` API omnigent's `TracingContext` wraps) against the
+e2-dogfood Databricks workspace's MLflow OTLP receiver. Verified the
+trace landed in UC and the spans carry the expected attributes:
+
+```
+Tracking URI: databricks
+Experiment:   id=3163592711242134 path=/Users/.../omnigent-databricks-docs-verification
+Trace ID:     tr-f13c03f61e44a0442c8865ab2c79e5a4
+Total traces found: 1
+  trace_id: tr-f13c03f61e44a0442c8865ab2c79e5a4
+  spans: 3
+    'agent:debby' attrs: ['gen_ai.agent.name', 'gen_ai.operation.name',
+                          'gen_ai.provider.name', 'gen_ai.request.model']
+    'llm_call' attrs: ['gen_ai.operation.name', 'gen_ai.provider.name',
+                       'gen_ai.request.model']
+    'tool:calculator' attrs: ['gen_ai.operation.name', 'tool.name']
+```
+
+The trace is queryable via `mlflow.search_traces()` and shows up in
+the workspace MLflow Traces UI at
+`/ml/experiments/<experiment_id>/traces/<trace_id>` per UC RBAC.
+
 ### Content capture and privacy
 
 omnigent does not capture message bodies into traces by default. Set:
@@ -552,8 +577,21 @@ observability series shipped in PRs [#1050](https://github.com/omnigent-ai/omnig
 [#1083](https://github.com/omnigent-ai/omnigent/pull/1083).
 
 Verified end-to-end against the e2-dogfood Databricks workspace
-(2026-06-24): Foundation Model call output, OpenAI SDK pattern,
-External Model endpoint shape, MLflow OTLP receiver pattern.
+(2026-06-24):
+
+- Foundation Model call output (`databricks-claude-sonnet-4`,
+  18 tokens in / 5 tokens out via CLI and 16 / 6 via OpenAI SDK)
+- OpenAI SDK pattern against `/serving-endpoints` with PAT auth
+- External Model (Gateway) endpoint shape from the live list of 21
+  Gateway endpoints on the workspace
+- MLflow OTLP receiver pattern via a real synthetic-trace round-trip:
+  experiment id `3163592711242134`, trace id
+  `tr-f13c03f61e44a0442c8865ab2c79e5a4`, 3 spans with the expected
+  `gen_ai.*` and `tool.*` attributes, fetched back via
+  `mlflow.search_traces()`
+
+The Apps deployment section links to `deploy/databricks/README.md`
+which is the canonical, already-merged recipe.
 
 Maintenance and updates: open an issue with the `databricks` label, or
 ping @debu-sinha on the omnigent Slack channel.
