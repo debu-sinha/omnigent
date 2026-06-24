@@ -394,6 +394,53 @@ to (Anthropic Claude Sonnet 4 via Bedrock). The Gateway endpoint name
 (`omnigent-docs-test-gateway`) is what omnigent calls. Swapping the
 backing model is a Gateway config update, zero change in the agent.
 
+### Auth tier compatibility (API key vs subscription / OAuth)
+
+Most coding-agent SDKs in this space support two auth flows. The
+distinction matters for what Gateway can actually intercept.
+
+**API key tier.** Per-token billing, a header on every request, a key
+that lives in a workspace secret. The Gateway pattern proxies cleanly:
+the proxied call uses the standard provider endpoint, the workspace
+secret holds the key, every prompt and response flows through the
+workspace.
+
+**Subscription / OAuth tier.** Flat-rate consumer subscriptions
+(Anthropic Claude Max, OpenAI ChatGPT Plus, Cursor Pro). The SDK
+authenticates via a browser OAuth flow against the consumer
+infrastructure. The resulting token is per-user, per-device, and
+short-lived. Gateway can't proxy these calls because the workspace
+secret can't hold a per-user OAuth token, and Gateway's outbound auth
+expects an API key, not a refreshable OAuth bearer. Even if the proxy
+were technically feasible, consumer subscriptions are positioned as
+individual products; orgs evaluating them for team use should verify
+the terms of service allow that pattern before relying on it.
+
+| Auth tier | Works with Gateway proxy? | Workspace audit? | Central cost tracking? |
+|---|---|---|---|
+| API key (Anthropic API, OpenAI API, etc.) | Yes | Yes — every prompt / response in UC | Yes — Gateway `usage_tracking_config.enabled` |
+| Claude Max / ChatGPT Plus / Cursor Pro (OAuth subscription) | No | omnigent session metadata only; LLM calls invisible | No — billed to the individual's consumer account |
+
+**Practical guidance for an org deployment.** Most enterprise
+Anthropic / OpenAI deals are API-tier with a volume agreement and an
+enterprise SLA. The Gateway story assumes that tier. If individual
+developers want to keep their consumer subscriptions for personal
+usage, that's fine, but those sessions sit outside the workspace
+audit and cost tracking.
+
+If centralized governance is a hard requirement, the omnigent host
+can enforce API-key-only by setting the provider's API-key env var
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.) before invoking the SDK
+subprocess and refusing to launch the SDK in OAuth mode. With
+`ANTHROPIC_API_KEY` set, the Claude Agent SDK uses the API endpoint
+and the workspace key, not the OAuth flow. Same pattern for the
+OpenAI Agents SDK.
+
+If mixed usage is acceptable, document the boundary explicitly:
+production / customer-facing work goes through the workspace
+(API tier + Gateway), individual experimentation can use consumer
+subscriptions but is out of band for compliance.
+
 ### What you get on Databricks vs raw provider calls
 
 | Capability | Raw provider call from omnigent | Through AI Gateway |
