@@ -1329,6 +1329,9 @@ def _build_codex_spawn_env(
     retry_payload = _serialize_retry_policy(_resolve_retry_policy(spec))
     if retry_payload is not None:
         env["HARNESS_CODEX_RETRY_POLICY"] = retry_payload
+    from omnigent.runtime.telemetry import get_otel_subprocess_env
+
+    env.update(get_otel_subprocess_env())
     return env
 
 
@@ -1434,6 +1437,9 @@ def _build_qwen_spawn_env(
     os_env_payload = _serialize_os_env(spec.os_env)
     if os_env_payload is not None:
         env["HARNESS_QWEN_OS_ENV"] = os_env_payload
+    from omnigent.runtime.telemetry import get_otel_subprocess_env
+
+    env.update(get_otel_subprocess_env())
     return env
 
 
@@ -1466,6 +1472,9 @@ def _build_goose_spawn_env(
     os_env_payload = _serialize_os_env(spec.os_env)
     if os_env_payload is not None:
         env["HARNESS_GOOSE_OS_ENV"] = os_env_payload
+    from omnigent.runtime.telemetry import get_otel_subprocess_env
+
+    env.update(get_otel_subprocess_env())
     return env
 
 
@@ -1713,6 +1722,9 @@ def _build_cursor_spawn_env(
     os_env_payload = _serialize_os_env(spec.os_env)
     if os_env_payload is not None:
         env["HARNESS_CURSOR_OS_ENV"] = os_env_payload
+    from omnigent.runtime.telemetry import get_otel_subprocess_env
+
+    env.update(get_otel_subprocess_env())
     return env
 
 
@@ -1773,6 +1785,9 @@ def _build_kimi_spawn_env(
     os_env_payload = _serialize_os_env(spec.os_env)
     if os_env_payload is not None:
         env["HARNESS_KIMI_OS_ENV"] = os_env_payload
+    from omnigent.runtime.telemetry import get_otel_subprocess_env
+
+    env.update(get_otel_subprocess_env())
     return env
 
 
@@ -1849,6 +1864,9 @@ def _build_antigravity_spawn_env(spec: AgentSpec) -> dict[str, str]:
         if location:
             env["HARNESS_ANTIGRAVITY_LOCATION"] = str(location)
 
+    from omnigent.runtime.telemetry import get_otel_subprocess_env
+
+    env.update(get_otel_subprocess_env())
     return env
 
 
@@ -1922,6 +1940,9 @@ def _build_copilot_spawn_env(
     os_env_payload = _serialize_os_env(spec.os_env)
     if os_env_payload is not None:
         env["HARNESS_COPILOT_OS_ENV"] = os_env_payload
+    from omnigent.runtime.telemetry import get_otel_subprocess_env
+
+    env.update(get_otel_subprocess_env())
     return env
 
 
