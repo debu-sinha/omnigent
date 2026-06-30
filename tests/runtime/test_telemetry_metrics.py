@@ -96,15 +96,12 @@ def test_record_token_usage_metric_handles_none_counts(
 def test_record_token_usage_metric_silent_on_bad_input(
     metric_reader: InMemoryMetricReader,
 ):
-    """Non-numeric token counts are silently dropped, not raised."""
+    """Non-numeric input drops the entire emission; no exception raised."""
     telemetry.record_token_usage_metric(input_tokens="not-a-number", output_tokens=10)  # type: ignore[arg-type]
     points = _datapoints_by_metric(metric_reader, "gen_ai.client.token.usage")
-    # Input was dropped via the ValueError path; output never recorded
-    # because the input path returned before reaching the output branch.
-    # The exact data-point count depends on whether the helper short-
-    # circuits after the first invalid input. Either way, no exception
-    # crosses into the caller.
-    assert all(p.attributes.get("gen_ai.token.type") != "input" for p in points)
+    # Helper short-circuits on the first invalid value via the try/except
+    # return path. Neither input nor output data points emit.
+    assert points == []
 
 
 def test_record_operation_duration_metric_emits_one_data_point(

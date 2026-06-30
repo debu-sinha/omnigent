@@ -53,6 +53,7 @@ SENTINEL_PARENT_SPAN_ID = 0x1000000000000001
 
 _capture_content: bool = False
 _initialized: bool = False
+_atexit_registered: bool = False
 _metrics_initialized: bool = False
 _logs_initialized: bool = False
 
@@ -436,8 +437,10 @@ def record_llm_usage(span: Span, usage: dict[str, Any]) -> None:
         ``"total_tokens"``, ``"cache_read_input_tokens"``,
         ``"cache_creation_input_tokens"``.
     """
-    input_tokens = int(usage.get("input_tokens", 0))
-    output_tokens = int(usage.get("output_tokens", 0))
+    raw_input = usage.get("input_tokens")
+    raw_output = usage.get("output_tokens")
+    input_tokens = int(raw_input) if raw_input is not None else 0
+    output_tokens = int(raw_output) if raw_output is not None else 0
     total = usage.get("total_tokens")
     if total is None:
         total = input_tokens + output_tokens
@@ -460,8 +463,8 @@ def record_llm_usage(span: Span, usage: dict[str, Any]) -> None:
     provider = attrs.get("gen_ai.provider.name")
     model = attrs.get("gen_ai.request.model")
     record_token_usage_metric(
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
+        input_tokens=raw_input if raw_input is not None else None,
+        output_tokens=raw_output if raw_output is not None else None,
         provider=str(provider) if provider else None,
         model=str(model) if model else None,
     )
@@ -820,6 +823,10 @@ def init() -> None:
     _init_otel_logs()
 
     _initialized = True
+    global _atexit_registered
+    if not _atexit_registered:
+        atexit.register(shutdown_metrics)
+        _atexit_registered = True
     _logger.info(
         "omnigent telemetry initialized (endpoint=%s, capture_content=%s)",
         endpoint or "<none>",
@@ -827,6 +834,5 @@ def init() -> None:
     )
 
 
-# Flush PeriodicExportingMetricReader buffer on process exit (default
-# 60s interval would drop accumulated data points on SIGTERM otherwise).
-atexit.register(shutdown_metrics)
+# Atexit registration is deferred to init() so test processes that import
+# this module without booting omnigent do not accumulate per-import handlers.
