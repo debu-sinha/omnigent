@@ -2693,6 +2693,7 @@ async def _auto_create_kiro_terminal(
     publish_event: Callable[[str, dict[str, Any]], None],
     *,
     server_client: httpx.AsyncClient | None,
+    ensure_comment_relay: Callable[..., Awaitable[None]] | None = None,
 ) -> SessionResourceView:
     """Auto-create the Kiro TUI terminal for a kiro-native session."""
     from omnigent.inner.datamodel import OSEnvSpec, TerminalEnvSpec
@@ -2701,6 +2702,7 @@ async def _auto_create_kiro_terminal(
         KIRO_NATIVE_ENV_UNSET,
         build_kiro_native_terminal_env,
         prepare_bridge_dir,
+        write_kiro_workspace_mcp_config,
     )
 
     launch_config = await _kiro_native_launch_config(
@@ -2712,6 +2714,12 @@ async def _auto_create_kiro_terminal(
         raise RuntimeError(f"Kiro workspace does not exist for session {session_id!r}.")
     workspace = str(workspace_path)
     bridge_dir = prepare_bridge_dir(session_id)
+    # Declare the Omnigent MCP server in the workspace-scoped kiro config so
+    # kiro-cli can call Omnigent tools. Only when the tool relay will actually
+    # start (server_client + ensure_comment_relay present), else serve-mcp would
+    # launch with no relay to route calls back to. Mirrors cursor-native.
+    if server_client is not None and ensure_comment_relay is not None:
+        write_kiro_workspace_mcp_config(workspace_path, bridge_dir)
     kiro_launch = build_kiro_launch(
         launch_config.terminal_launch_args or [],
         resume_id=launch_config.external_session_id,
@@ -2757,6 +2765,17 @@ async def _auto_create_kiro_terminal(
 
     server_url = _required_runner_env("RUNNER_SERVER_URL")
     _runner_auth = _RunnerDatabricksAuth(_make_auth_token_factory())
+
+    # Start the Omnigent builtin-tool relay (writes tool_relay.json into the kiro
+    # bridge dir) so the serve-mcp server declared in the workspace mcp.json can
+    # route Omnigent tool calls back through the session's policy/elicitation
+    # gate. Mirrors cursor-native.
+    if server_client is not None and ensure_comment_relay is not None:
+        await ensure_comment_relay(
+            session_id,
+            explicit_bridge_dir=bridge_dir,
+            await_notify=False,
+        )
 
     from omnigent.kiro_native_permissions import supervise_kiro_permission_mirror
     from omnigent.kiro_native_session_forwarder import supervise_kiro_session_forwarder
@@ -4110,6 +4129,8 @@ async def _auto_create_antigravity_terminal(
     from omnigent.antigravity_native_bridge import (
         ANTIGRAVITY_NATIVE_BRIDGE_ID_LABEL_KEY,
         AntigravityNativeBridgeState,
+        agy_gemini_dir,
+        agy_home_dir,
         clear_bridge_state,
         ensure_agy_feedback_survey_disabled,
         ensure_agy_onboarding_complete,
@@ -4205,23 +4226,33 @@ async def _auto_create_antigravity_terminal(
     # Wire the Omnigent MCP relay so the wrapped agy gets the sys_* tools
     # (spawn sub-agent sessions, drive Omnigent terminals, list agents/models,
     # sys_os_*) — the only native harness that otherwise lacks them (#1194).
-    # agy has no --mcp-config flag and ignores ANTIGRAVITY_* env knobs; it loads
-    # MCP servers ONLY from the HOME-global ~/.gemini/config/mcp_config.json. To
-    # avoid clobbering the user's interactive agy config (and the concurrency
-    # footgun of a single shared file), launch agy under a per-session ISOLATED
-    # HOME seeded with a copy of the user's OAuth token + onboarding state and a
-    # bridge-scoped mcp_config.json. The relay subprocess is the same shared
-    # ``serve-mcp`` claude/codex/cursor use. Offloaded to a thread (file I/O) and
-    # done BEFORE the terminal launch so agy sees the config on its first MCP scan.
+    # agy has no --mcp-config flag and ignores ANTIGRAVITY_* env knobs. It does
+    # accept the hidden --gemini_dir flag, so keep the process HOME real for auth
+    # providers such as macOS Keychain, but point agy's config/state root at a
+    # per-session isolated Gemini dir. This avoids clobbering the user's
+    # interactive ~/.gemini/config/mcp_config.json and avoids the concurrency
+    # footgun of one shared bridge-specific config file. The relay subprocess is
+    # the same shared ``serve-mcp`` claude/codex/cursor use. Offloaded to a thread
+    # (file I/O) and done BEFORE terminal launch so agy sees the config on its
+    # first MCP scan.
     await asyncio.to_thread(write_mcp_config, bridge_dir)
     env_overrides = {
         **env_overrides,
-        **await asyncio.to_thread(seed_isolated_agy_home, bridge_dir),
+        **await asyncio.to_thread(
+            seed_isolated_agy_home,
+            bridge_dir,
+            trusted_workspace=workspace,
+        ),
     }
     # agy's periodic feedback survey shares its "esc to cancel" footer with the
     # running-turn marker, so a web turn injected while it is up is misread as an
-    # active turn and lost (#1494). Disable it in the launch HOME before agy starts.
-    await asyncio.to_thread(ensure_agy_feedback_survey_disabled, Path(env_overrides["HOME"]))
+    # active turn and lost (#1494). Disable it before launch. agy now runs under
+    # the real HOME with an isolated --gemini_dir, so the survey setting must be
+    # written into that isolated dir (ensure_agy_feedback_survey_disabled appends
+    # /.gemini/antigravity-cli/settings.json to its arg), NOT the user's real
+    # HOME — env_overrides no longer carries a HOME key.
+    await asyncio.to_thread(ensure_agy_feedback_survey_disabled, agy_home_dir(bridge_dir))
+    argv = [argv[0], f"--gemini_dir={agy_gemini_dir(bridge_dir)}", *argv[1:]]
     # Start the shared comment/sys_* relay against THIS session's bridge dir before
     # launch so its tool_relay.json is on disk when agy first scans the MCP server.
     # ``await_notify=False``: agy starts its MCP client lazily, so awaiting the
@@ -9177,6 +9208,7 @@ def create_runner_app(
                             resource_registry,
                             _publish_event,
                             server_client=server_client,
+                            ensure_comment_relay=_ensure_comment_relay_started,
                         )
                     except Exception as exc:
                         _logger.exception(
@@ -15809,6 +15841,7 @@ def create_runner_app(
                         resource_registry,
                         _publish_event,
                         server_client=server_client,
+                        ensure_comment_relay=_ensure_comment_relay_started,
                     )
                 except Exception as exc:
                     _logger.exception(
