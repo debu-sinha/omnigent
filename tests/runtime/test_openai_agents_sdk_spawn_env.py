@@ -507,8 +507,8 @@ def test_telemetry_env_injected_when_configured_and_span_active(
     # Use a fresh OTel TracerProvider directly so the active-span
     # context is guaranteed regardless of MLflow tracing init state.
     provider = TracerProvider()
-    otel_trace._TRACER_PROVIDER = provider  # type: ignore[attr-defined]
-    otel_trace._TRACER_PROVIDER_SET_ONCE._done = True  # type: ignore[attr-defined]
+    monkeypatch.setattr(otel_trace, "_TRACER_PROVIDER", provider)
+    monkeypatch.setattr(otel_trace._TRACER_PROVIDER_SET_ONCE, "_done", True)
     tracer = otel_trace.get_tracer("omnigent.test")
 
     with tracer.start_as_current_span("agent"):
