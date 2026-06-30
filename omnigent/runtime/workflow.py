@@ -1249,6 +1249,13 @@ def _build_claude_sdk_spawn_env(
     permission_mode = spec.executor.config.get("permission_mode")
     if permission_mode is not None:
         env["HARNESS_CLAUDE_SDK_PERMISSION_MODE"] = str(permission_mode)
+
+    # Forward the OTel exporter knobs so the Claude Agent SDK can ship its
+    # own spans to the same OTLP collector omnigent uses. claude_sdk=True
+    # also flips the SDK's built-in telemetry hooks on.
+    from omnigent.runtime.telemetry import get_otel_subprocess_env
+
+    env.update(get_otel_subprocess_env(claude_sdk=True))
     return env
 
 
@@ -1376,6 +1383,12 @@ def _build_pi_spawn_env(
     os_env_payload = _serialize_os_env(spec.os_env)
     if os_env_payload is not None:
         env["HARNESS_PI_OS_ENV"] = os_env_payload
+
+    # Forward the OTel exporter knobs into the pi subprocess so its LLM
+    # provider spans can ship to the same OTLP collector omnigent uses.
+    from omnigent.runtime.telemetry import get_otel_subprocess_env
+
+    env.update(get_otel_subprocess_env())
     return env
 
 
@@ -1626,6 +1639,11 @@ def _build_openai_agents_sdk_spawn_env(spec: AgentSpec) -> dict[str, str]:
         ucode_profile,
         harness_type="openai-agents-sdk",
     )
+    # Forward the OTel exporter knobs to the openai-agents subprocess so its
+    # provider spans can ship to the same OTLP collector omnigent uses.
+    from omnigent.runtime.telemetry import get_otel_subprocess_env
+
+    env.update(get_otel_subprocess_env())
     return env
 
 
