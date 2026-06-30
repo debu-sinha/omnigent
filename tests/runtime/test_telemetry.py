@@ -347,11 +347,10 @@ def test_get_otel_subprocess_env_endpoint_with_active_span(
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
 
-    import mlflow
-    from mlflow.entities import SpanType
+    from opentelemetry import trace as otel_trace
 
     with telemetry.trace_context_for_response(response_id=_RESP_ID):
-        with mlflow.start_span("agent", span_type=SpanType.AGENT):
+        with otel_trace.get_tracer("test").start_as_current_span("agent"):
             env = telemetry.get_otel_subprocess_env()
 
     assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://localhost:4317"
